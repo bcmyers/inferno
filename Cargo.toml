@@ -24,6 +24,7 @@ default = ["cli"]
 cli = ["structopt", "env_logger"]
 
 [dependencies]
+dtoa = "0.4"
 log = "0.4"
 quick-xml = "0.13.3"
 num-format = { version = "0.4", default-features = false }

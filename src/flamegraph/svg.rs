@@ -9,6 +9,8 @@ use std::io::prelude::*;
 use std::iter;
 use str_stack::StrStack;
 
+use crate::flamegraph::utils;
+
 pub(super) enum TextArgument<'a> {
     String(Cow<'a, str>),
     FromBuffer(usize),
@@ -162,9 +164,11 @@ var searchcolor = '{}';",
     ))?;
 
     // We don't care too much about allocating just for the prelude
-    let mut buf = StrStack::new();
+    let mut stack = StrStack::new();
+    let mut buf = Vec::new();
     write_str(
         svg,
+        &mut stack,
         &mut buf,
         TextItem {
             x: (opt.image_width / 2) as f64,
@@ -177,6 +181,7 @@ var searchcolor = '{}';",
     if let Some(ref subtitle) = opt.subtitle {
         write_str(
             svg,
+            &mut stack,
             &mut buf,
             TextItem {
                 x: (opt.image_width / 2) as f64,
@@ -189,6 +194,7 @@ var searchcolor = '{}';",
 
     write_str(
         svg,
+        &mut stack,
         &mut buf,
         TextItem {
             x: super::XPAD as f64,
@@ -200,6 +206,7 @@ var searchcolor = '{}';",
 
     write_str(
         svg,
+        &mut stack,
         &mut buf,
         TextItem {
             x: super::XPAD as f64,
@@ -211,6 +218,7 @@ var searchcolor = '{}';",
 
     write_str(
         svg,
+        &mut stack,
         &mut buf,
         TextItem {
             x: (opt.image_width - super::XPAD - 100) as f64,
@@ -222,6 +230,7 @@ var searchcolor = '{}';",
 
     write_str(
         svg,
+        &mut stack,
         &mut buf,
         TextItem {
             x: (opt.image_width - super::XPAD - 100) as f64,
@@ -236,15 +245,16 @@ var searchcolor = '{}';",
 
 pub(super) fn write_str<'a, W, I>(
     svg: &mut Writer<W>,
-    buf: &mut StrStack,
+    stack: &mut StrStack,
+    buf: &mut Vec<u8>,
     item: TextItem<'a, I>,
 ) -> quick_xml::Result<usize>
 where
     W: Write,
     I: IntoIterator<Item = (&'a str, &'a str)>,
 {
-    let x = write!(buf, "{:.2}", item.x);
-    let y = write!(buf, "{:.2}", item.y);
+    let x = utils::write_truncated(stack, buf, item.x, 2)?;
+    let y = utils::write_truncated(stack, buf, item.y, 2)?;
 
     let TextItem { text, extra, .. } = item;
 
@@ -257,8 +267,8 @@ where
             text.clear_attributes();
             text.extend_attributes(extra);
             text.extend_attributes(args!(
-                "x" => &buf[x],
-                "y" => &buf[y]
+                "x" => &stack[x],
+                "y" => &stack[y]
             ));
         } else {
             unreachable!("cache wrapper was of wrong type: {:?}", start_event);
@@ -268,7 +278,7 @@ where
     })?;
     let s = match text {
         TextArgument::String(ref s) => &*s,
-        TextArgument::FromBuffer(i) => &buf[i],
+        TextArgument::FromBuffer(i) => &stack[i],
     };
     svg.write_event(Event::Text(BytesText::from_plain_str(s)))?;
     svg.write_event(Event::End(BytesEnd::borrowed(b"text")))

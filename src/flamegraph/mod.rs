@@ -8,6 +8,7 @@ mod attrs;
 pub mod color;
 mod merge;
 mod svg;
+mod utils;
 
 pub use attrs::FuncFrameAttrsMap;
 pub use color::Palette;
@@ -412,7 +413,8 @@ where
         warn!("Ignored {} lines with invalid format", ignored);
     }
 
-    let mut buffer = StrStack::new();
+    let mut stack = StrStack::new();
+    let mut buf = Vec::new();
 
     // let's start writing the svg!
     let mut svg = if opt.pretty_xml {
@@ -428,7 +430,8 @@ where
         svg::write_header(&mut svg, imageheight, &opt)?;
         svg::write_str(
             &mut svg,
-            &mut buffer,
+            &mut stack,
+            &mut buf,
             svg::TextItem {
                 x: (opt.image_width / 2) as f64,
                 y: (opt.font_size * 2) as f64,
@@ -492,6 +495,7 @@ where
 
     // draw frames
     let mut samples_txt_buffer = num_format::Buffer::default();
+    let mut float_buffer = Vec::new();
     for frame in frames {
         let x1 = XPAD + (frame.start_time as f64 * widthpertime) as usize;
         let x2 = XPAD + (frame.end_time as f64 * widthpertime) as usize;
@@ -524,21 +528,28 @@ where
         let samples_txt = samples_txt_buffer.as_str();
 
         let info = if frame.location.function.is_empty() && frame.location.depth == 0 {
-            write!(buffer, "all ({} {}, 100%)", samples_txt, opt.count_name)
+            write!(stack, "all ({} {}, 100%)", samples_txt, opt.count_name)
         } else {
             let pct = (100 * samples) as f64 / (timemax as f64 * opt.factor);
             let function = deannotate(&frame.location.function);
+            utils::write_truncted2(&mut float_buffer, pct, 2)?;
             match frame.delta {
                 None => write!(
-                    buffer,
-                    "{} ({} {}, {:.2}%)",
-                    function, samples_txt, opt.count_name, pct
+                    stack,
+                    "{} ({} {}, {}%)",
+                    function,
+                    samples_txt,
+                    opt.count_name,
+                    unsafe { std::str::from_utf8_unchecked(&float_buffer) }
                 ),
                 // Special case delta == 0 so we don't format percentage with a + sign.
                 Some(delta) if delta == 0 => write!(
-                    buffer,
-                    "{} ({} {}, {:.2}%; 0.00%)",
-                    function, samples_txt, opt.count_name, pct,
+                    stack,
+                    "{} ({} {}, {}%; 0.00%)",
+                    function,
+                    samples_txt,
+                    opt.count_name,
+                    unsafe { std::str::from_utf8_unchecked(&float_buffer) },
                 ),
                 Some(mut delta) => {
                     if opt.negate_differentials {
@@ -546,9 +557,13 @@ where
                     }
                     let delta_pct = (100 * delta) as f64 / (timemax as f64 * opt.factor);
                     write!(
-                        buffer,
-                        "{} ({} {}, {:.2}%; {:+.2}%)",
-                        function, samples_txt, opt.count_name, pct, delta_pct
+                        stack,
+                        "{} ({} {}, {}%; {:+.2}%)",
+                        function,
+                        samples_txt,
+                        opt.count_name,
+                        unsafe { std::str::from_utf8_unchecked(&float_buffer) },
+                        delta_pct
                     )
                 }
             }
@@ -557,7 +572,7 @@ where
         let frame_attributes = opt
             .func_frameattrs
             .frameattrs_for_func(frame.location.function);
-        let frame_attributes = override_or_add_attributes(&buffer[info], frame_attributes);
+        let frame_attributes = override_or_add_attributes(&stack[info], frame_attributes);
         let href_is_some = frame_attributes.href.is_some();
 
         if href_is_some {
@@ -598,7 +613,7 @@ where
                 &mut thread_rng,
             )
         };
-        filled_rectangle(&mut svg, &mut buffer, &rect, color, &mut cache_rect)?;
+        filled_rectangle(&mut svg, &mut stack, &rect, color, &mut cache_rect)?;
 
         let fitchars =
             (rect.width() as f64 / (opt.font_size as f64 * opt.font_width)).trunc() as usize;
@@ -613,7 +628,7 @@ where
             } else {
                 // need to truncate :'(
                 use std::fmt::Write;
-                let mut w = buffer.writer();
+                let mut w = stack.writer();
                 for c in f.chars().take(fitchars - 2) {
                     w.write_char(c).expect("writing to buffer shouldn't fail");
                 }
@@ -628,7 +643,8 @@ where
         // write the text
         svg::write_str(
             &mut svg,
-            &mut buffer,
+            &mut stack,
+            &mut buf,
             svg::TextItem {
                 x: rect.x1 as f64 + 3.0,
                 y: 3.0 + (rect.y1 + rect.y2) as f64 / 2.0,
@@ -637,7 +653,7 @@ where
             },
         )?;
 
-        buffer.clear();
+        stack.clear();
         if href_is_some {
             svg.write_event(&cache_a_end)?;
         } else {
